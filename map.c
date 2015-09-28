@@ -45,8 +45,7 @@ TMap * Map_LoadFromFile( const char * fileName ) {
     if( loadingFailed ) {
         int surfaceNum = 0;
         for_each( TSurface, surf, map->root->allSurfaces ) {    
-            const char * atlasName = Std_Format( "%s/%s_surface%d.lmp", "data/lightmaps/", surf->sourceName, surfaceNum );
-            //Lightmap_BuildForSurface( surf, &surf->onLoadOwner->globalPosition );     
+            const char * atlasName = Std_Format( "%s/%s_surface%d.lmp", "data/lightmaps/", surf->sourceName, surfaceNum );    
             Lightmap_BuildForSurfaceMultithreaded( surf, &surf->onLoadOwner->globalPosition, surfaceNum, map->root->allSurfaces.size );       
             LightmapAtlas_SaveSurfaceAtlases( surf, atlasName );            
             surfaceNum++;

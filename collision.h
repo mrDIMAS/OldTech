@@ -135,6 +135,8 @@ bool EdgeSphereIntersection( const TRay * edgeRay, const TSphereShape * sphere, 
 TRay Ray_Set( TVec3 begin, TVec3 end );
 TRay Ray_SetDirection( TVec3 begin, TVec3 direction );
 void Ray_TraceWorld( TRay * ray, TRayTraceResult * out );
+// traces ray only through dynamic object, such as spheres and boxes
+void Ray_TraceWorldDynamic( TRay * ray, TRayTraceResult * out ); 
 // special multithreaded version, mostly used in lightmap generation
 // threadNum can be 0 to 4, keep in mind that this function traces ray
 // only through static geometry

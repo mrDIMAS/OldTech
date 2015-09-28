@@ -264,7 +264,13 @@ void Ray_TraceWorld( TRay * ray, TRayTraceResult * out ) {
         if( body->shape->type == SHAPE_SPHERE ) {
             TSphereShape sph = SphereShape_Set( body->position, body->shape->sphereRadius );
             TVec3 ip1, ip2;
-            Intersection_RaySphere( ray, &sph, &ip1, &ip2, RAY_INFINITE );
+            if( Intersection_RaySphere( ray, &sph, &ip1, &ip2, RAY_INFINITE )) {
+                out->position = Vec3_Max( ip1, ip2 );
+                out->triangle = NULL;
+                out->normal = ray->dir;
+                out->body = body;
+                return;
+            }
         }
     }
 
@@ -272,6 +278,27 @@ void Ray_TraceWorld( TRay * ray, TRayTraceResult * out ) {
     out->position = nearestPosition;
     out->triangle = nearestTriangle;
     out->normal = nearestNormal;
+}
+
+void Ray_TraceWorldDynamic( TRay * ray, TRayTraceResult * out ) {
+    for_each( TBody, body, g_dynamicsWorld.bodies ) {
+        // trace ray through spheres 
+        if( body->shape->type == SHAPE_SPHERE ) {
+            TSphereShape sph = SphereShape_Set( body->position, body->shape->sphereRadius );
+            TVec3 ip1, ip2;
+            if( Intersection_RaySphere( ray, &sph, &ip1, &ip2, RAY_INFINITE )) {
+                out->position = Vec3_Max( ip1, ip2 );
+                out->triangle = NULL;
+                out->normal = ray->dir;
+                out->body = body;
+                return;
+            }
+        }
+    }
+    out->position = Vec3_Zero();
+    out->body = NULL;
+    out->normal = Vec3_Zero();
+    out->triangle = NULL;
 }
 
 void Ray_TraceWorldMultithreaded( TRay * ray, TRayTraceResult * out, int threadNum ) {

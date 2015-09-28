@@ -1,6 +1,7 @@
 #include "shader.h"
 #include "renderer.h"
 
+/*
 void Shader_LoadFromFile( TShader * shader, const char * filename ) {
     // read file
 	FILE * file = fopen( filename, "rb" );
@@ -17,9 +18,10 @@ void Shader_LoadFromFile( TShader * shader, const char * filename ) {
 	fread( buffer, 1, size, file );
 	fclose( file );
 
-    Renderer_CompileARBShader( shader, buffer, size );
+    //Renderer_CompileARBShader( shader, buffer, size );
     
     Memory_Free( buffer );
 }
 
 
+*/

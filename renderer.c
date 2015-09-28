@@ -2,15 +2,6 @@
  * Note, that only this file use OpenGL functionality, so you can add new renderer by 
  * replacing content of this file
  */
- 
-void Util_CheckGLErrorFunc( const char * file, int line, const char * func );
-
-#ifdef _DEBUG_GL_
-#   define Debug_CheckGLError( glFunc ) ( glFunc ); Util_CheckGLErrorFunc( __FILE__, __LINE__, __func__ )
-#else
-#   define Debug_CheckGLError( glFunc ) ( glFunc )
-#endif
-
 #ifdef _WIN32
 #   define _WIN32_WINNT 0x0501 // win xp
 #   include <windows.h>
@@ -28,6 +19,10 @@ void Util_CheckGLErrorFunc( const char * file, int line, const char * func );
 #include "lightmap.h"
 #include "shader.h"
 #include "font.h"
+#include "gui.h"
+
+#include <cg/cg.h>
+#include <cg/cgGL.h>
 
 // OpenGL Functionality
 #include <gl/gl.h>
@@ -35,38 +30,32 @@ void Util_CheckGLErrorFunc( const char * file, int line, const char * func );
 #include "glext.h"
 #include "wglext.h"
 
-// Multitexturing
-PFNGLACTIVETEXTUREARBPROC glActiveTextureARB = NULL;
-PFNGLCLIENTACTIVETEXTUREARBPROC glClientActiveTextureARB = NULL;
-PFNGLMULTITEXCOORD1FARBPROC glMultiTexCoord1f = NULL;
-PFNGLMULTITEXCOORD1FVARBPROC glMultiTexCoord1fv = NULL;
-PFNGLMULTITEXCOORD2FARBPROC glMultiTexCoord2f = NULL;
-PFNGLMULTITEXCOORD2FVARBPROC glMultiTexCoord2fv = NULL;
+typedef struct TLightmapProgram {
+    CGprogram vertex;
+    CGprogram fragment;
+    
+    CGparameter vMVP;
+} TLightmapProgram;
 
-// ARB Program
-PFNGLGETPROGRAMIVARBPROC glGetProgramivARB = NULL;
-PFNGLPROGRAMSTRINGARBPROC glProgramStringARB = NULL;
-PFNGLBINDPROGRAMARBPROC glBindProgramARB = NULL;
-PFNGLDELETEPROGRAMSARBPROC glDeleteProgramsARB = NULL;
-PFNGLGENPROGRAMSARBPROC glGenProgramsARB = NULL;
-PFNGLPROGRAMENVPARAMETER4FARBPROC glProgramEnvParameter4fARB = NULL;
-PFNGLPROGRAMENVPARAMETER4FVARBPROC glProgramEnvParameter4fvARB = NULL;
-PFNGLPROGRAMLOCALPARAMETER4FARBPROC glProgramLocalParameter4fARB = NULL;
-PFNGLPROGRAMLOCALPARAMETER4FVARBPROC glProgramLocalParameter4fvARB = NULL;
-PFNGLGETPROGRAMENVPARAMETERFVARBPROC glGetProgramEnvParameterfvARB = NULL;
-PFNGLGETPROGRAMLOCALPARAMETERFVARBPROC glGetProgramLocalParameterfvARB = NULL;
-PFNGLGETPROGRAMSTRINGARBPROC glGetProgramStringARB = NULL;
-PFNGLISPROGRAMARBPROC glIsProgramARB = NULL;
+typedef struct TGUIProgram {
+    CGprogram vertex;
+    CGprogram fragment;
+    
+    CGparameter pColor;
+    CGparameter vProjection;
+} TGUIProgram;
 
-// VBO
-PFNGLGENBUFFERSARBPROC glGenBuffersARB = NULL;
-PFNGLBINDBUFFERARBPROC glBindBufferARB = NULL;
-PFNGLDELETEBUFFERSARBPROC glDeleteBuffersARB = NULL;
-PFNGLBUFFERDATAARBPROC glBufferDataARB = NULL;
-PFNGLBUFFERSUBDATAARBPROC glBufferSubDataARB = NULL;
-
-// Win32 Window Procedure
-LRESULT CALLBACK Renderer_WindowProc( HWND wnd, UINT msg, WPARAM wParam, LPARAM lParam );
+typedef struct TLightProgram {
+    CGprogram vertex;
+    CGprogram fragment;
+    
+    CGparameter vMVP;
+    CGparameter vWorld;
+    CGparameter vLightPosition;
+    CGparameter vLightRange;
+    CGparameter vLightColor;
+    CGparameter vAmbientColor;
+} TLightProgram;
 
 typedef struct TRenderer {
     HWND handle;
@@ -80,16 +69,76 @@ typedef struct TRenderer {
     int maxAnisotropy;
     ETextureFilter texFilter;
     
-    TShader vertexShader;
-    TShader fragmentShader;
+    CGprofile bestVertexProfile;
+    CGprofile bestFragmentProfile;
     
-    TShader guiVertexShader;
-    TShader guiFragmentShader;
+    TLightmapProgram lightmapProgram;
+    TGUIProgram guiProgram;
+    TLightProgram lightProgram;
     
-    GLuint whitePixelTexture;
+    CGcontext cgContext;
 } TRenderer;
 
 TRenderer * gRenderer = NULL;
+
+// Some useful macros to check errors
+#ifdef _DEBUG_GL_
+    void Util_CheckGLErrorFunc( const char * file, int line,  const char * func  ) {
+        GLenum g = glGetError();
+        switch (g) {
+        case GL_INVALID_ENUM:
+            Util_RaiseError( "OpenGL Error: GL_INVALID_ENUM in '%s' in line %d in function %s", file, line, func );
+        case GL_INVALID_VALUE:
+            Util_RaiseError( "OpenGL Error: GL_INVALID_VALUE in '%s' in line %d in function %s", file, line, func );
+        case GL_INVALID_OPERATION:
+            Util_RaiseError( "OpenGL Error: GL_INVALID_OPERATION in '%s' in line %d in function %s", file, line, func );
+        case GL_STACK_OVERFLOW:
+            Util_RaiseError( "OpenGL Error: GL_STACK_OVERFLOW in '%s' in line %d in function %s", file, line, func );
+        case GL_STACK_UNDERFLOW:
+            Util_RaiseError( "OpenGL Error: GL_STACK_UNDERFLOW in '%s' in line %d in function %s", file, line, func );
+        case GL_OUT_OF_MEMORY:
+            Util_RaiseError( "OpenGL Error: GL_OUT_OF_MEMORY in '%s' in line %d in function %s", file, line, func );
+        };
+    }
+#   define Debug_CheckGLError( glFunc ) ( glFunc ); Util_CheckGLErrorFunc( __FILE__, __LINE__, __func__ )
+#else
+#   define Debug_CheckGLError( glFunc ) ( glFunc )
+#endif
+
+#ifdef _DEBUG_GL_
+    static void Renderer_CheckCgErrorFunc( const char * file, int line ) {
+        CGerror error;
+        const char *string = cgGetLastErrorString(&error);
+        if (error != CG_NO_ERROR) {
+            if( error == CG_COMPILER_ERROR ) {
+                Util_RaiseError( "Cg compile error in %s on line %d:\n%s", file, line, cgGetLastListing( gRenderer->cgContext ));
+            }
+            Util_RaiseError( "Cg runtime error in %s on line %d:\n%s", file, line, string );
+            exit(1);
+        }
+    }
+#   define Renderer_CheckCgError( func ) (func); Renderer_CheckCgErrorFunc( __FILE__, __LINE__ )
+#else
+#   define Renderer_CheckCgError( func ) (func);
+#endif
+
+// Multitexturing
+PFNGLACTIVETEXTUREARBPROC glActiveTextureARB;
+PFNGLCLIENTACTIVETEXTUREARBPROC glClientActiveTextureARB;
+PFNGLMULTITEXCOORD1FARBPROC glMultiTexCoord1f;
+PFNGLMULTITEXCOORD1FVARBPROC glMultiTexCoord1fv;
+PFNGLMULTITEXCOORD2FARBPROC glMultiTexCoord2f;
+PFNGLMULTITEXCOORD2FVARBPROC glMultiTexCoord2fv;
+
+// VBO
+PFNGLGENBUFFERSARBPROC glGenBuffersARB;
+PFNGLBINDBUFFERARBPROC glBindBufferARB;
+PFNGLDELETEBUFFERSARBPROC glDeleteBuffersARB;
+PFNGLBUFFERDATAARBPROC glBufferDataARB;
+PFNGLBUFFERSUBDATAARBPROC glBufferSubDataARB;
+
+// Win32 Window Procedure
+LRESULT CALLBACK Renderer_WindowProc( HWND wnd, UINT msg, WPARAM wParam, LPARAM lParam );
 
 float Renderer_GetWindowAspectRatio() {
     return gRenderer->aspect;
@@ -122,8 +171,8 @@ void Renderer_DeleteSurfaceBuffers( TSurface * surf ) {
 }
 
 void Renderer_RenderRect( float x, float y, float x2, float y2, TVec3 color ) {
-    Renderer_SetShaderLocal( &gRenderer->guiVertexShader, 0, color.x, color.y, color.z, 1.0f );
-    
+    Renderer_CheckCgError( cgSetParameter3f( gRenderer->guiProgram.pColor, color.x, color.y, color.z ));
+
     glBegin( GL_QUADS );
     
     glMultiTexCoord2f( GL_TEXTURE0_ARB, 0.0f, 0.0f );
@@ -142,7 +191,7 @@ void Renderer_RenderRect( float x, float y, float x2, float y2, TVec3 color ) {
 }
 
 void Renderer_RenderGlyph( const TGlyphRenderInfo * ri ) {
-    Renderer_SetShaderLocal( &gRenderer->guiVertexShader, 0, ri->color.x, ri->color.y, ri->color.z, 1.0f );
+    Renderer_CheckCgError( cgSetParameter3f( gRenderer->guiProgram.pColor, ri->color.x, ri->color.y, ri->color.z ));
     
     glBegin( GL_QUADS );
     
@@ -179,29 +228,6 @@ void Renderer_LoadTextureFromMemory( TTexture * texture, int width, int height, 
     texture->bpp = bytePerPixel * 8;
     texture->bytesPerPixel = bytePerPixel;
     texture->bytesCount = width * height * bytePerPixel;
-}
-
-void Renderer_CompileARBShader( TShader * shader, char * program, int size ) {
-    if( strncmp( program, "!!ARBvp", 7 ) == 0 ) {
-        shader->type = SHADER_VERTEX;
-    } else if ( strncmp( program, "!!ARBfp", 7 ) == 0 ) {
-        shader->type = SHADER_FRAGMENT;
-    } else {
-        Util_RaiseError( "Unable to load shader! Unsupported format!" );
-    }
-    
-	shader->target = (shader->type == SHADER_VERTEX) ? GL_VERTEX_PROGRAM_ARB : GL_FRAGMENT_PROGRAM_ARB;
-    
-	glEnable( shader->target );
-	glGenProgramsARB( 1, &shader->id );
-	glBindProgramARB( shader->target, shader->id );
-	glProgramStringARB( shader->target, GL_PROGRAM_FORMAT_ASCII_ARB, size, program );
-	const GLubyte* errorString = glGetString( GL_PROGRAM_ERROR_STRING_ARB );
-	if( glGetError() != GL_NO_ERROR ) {
-		Util_RaiseError( "Unable to compile shader! Compiler output:\n%s", errorString );
-	} else {
-        Log_Write( "Shader successfully compiled!" );
-    }    
 }
 
 void Renderer_FreeTexture( TTexture * texture ) {
@@ -280,32 +306,64 @@ void Renderer_BuildSurfaceBuffers( TSurface * surf ) {
 void Renderer_BindSurface( TSurface * surf ) {
     Debug_CheckGLError( glEnableClientState( GL_INDEX_ARRAY ));
     Debug_CheckGLError( glEnableClientState( GL_VERTEX_ARRAY ));
+    Debug_CheckGLError( glEnableClientState( GL_NORMAL_ARRAY ));
     
     Debug_CheckGLError( glBindBufferARB( GL_ARRAY_BUFFER_ARB, surf->vertexBuffer ));
     Debug_CheckGLError( glVertexPointer( 3, GL_FLOAT, sizeof( TVertex ), (void*)0 ));
     
-    int texCoord0Stride = ((int)&surf->vertices[0].t) - ((int)&surf->vertices[0]);
-    int texCoord1Stride = ((int)&surf->vertices[0].t2) - ((int)&surf->vertices[0]);
-    
+    int normalStride = ((int)&surf->vertices[0].n) - ((int)&surf->vertices[0]); 
+    Debug_CheckGLError( glNormalPointer( GL_FLOAT, sizeof( TVertex ), (void*)normalStride ));
+     
+    int texCoord0Stride = ((int)&surf->vertices[0].t) - ((int)&surf->vertices[0]);   
     Debug_CheckGLError( glClientActiveTextureARB( GL_TEXTURE0_ARB ));
     Debug_CheckGLError( glEnableClientState( GL_TEXTURE_COORD_ARRAY ));
     Debug_CheckGLError( glTexCoordPointer( 2, GL_FLOAT, sizeof( TVertex ), (void*)texCoord0Stride ));
 
+    int texCoord1Stride = ((int)&surf->vertices[0].t2) - ((int)&surf->vertices[0]);
     Debug_CheckGLError( glClientActiveTextureARB( GL_TEXTURE1_ARB ));
     Debug_CheckGLError( glEnableClientState( GL_TEXTURE_COORD_ARRAY ));
     Debug_CheckGLError( glTexCoordPointer( 2, GL_FLOAT, sizeof( TVertex ), (void*)texCoord1Stride ));
 }
 
-void Renderer_RenderSurface( TSurface * surf, const TVec3 * color ) {
-    Renderer_SetShaderLocal( &gRenderer->vertexShader, 0, color->x, color->y, color->z, 1.0f );    
-    
+void Renderer_RenderSurface( TSurface * surf, TMatrix4 mvp, TEntity * owner ) {
     Renderer_BindTexture( surf->texture, 0 );    
+       
     
-    if( !surf->lightmapped ) {     
-        // set 'white-pixel' texture as active to lightmap sampler
-        Debug_CheckGLError( glActiveTextureARB( GL_TEXTURE1_ARB ));
-        Debug_CheckGLError( glBindTexture( GL_TEXTURE_2D, gRenderer->whitePixelTexture ));
+    Renderer_CheckCgError( cgUpdateProgramParameters( gRenderer->lightmapProgram.fragment ));
+    Renderer_CheckCgError( cgUpdateProgramParameters( gRenderer->lightmapProgram.vertex ));
+    
+    if( !surf->lightmapped ) {           
+        Renderer_CheckCgError( cgGLBindProgram( gRenderer->lightProgram.fragment ));
+        
+        Renderer_CheckCgError( cgGLBindProgram( gRenderer->lightProgram.vertex ));
+
+        Renderer_CheckCgError( cgSetMatrixParameterfr( gRenderer->lightProgram.vMVP, mvp.f ));
+        Renderer_CheckCgError( cgSetMatrixParameterfr( gRenderer->lightProgram.vWorld, owner->globalTransform.f ));
+        Renderer_CheckCgError( cgSetParameter3f( gRenderer->lightProgram.vAmbientColor, gAmbientLight.x, gAmbientLight.y, gAmbientLight.z ));
+        
+        TLight * nearest = NULL;
+        float dist = 999999.0f;
+        for_each( TLight, light, g_lights ) {
+            float cdist = Vec3_Distance( light->owner->globalPosition, owner->globalPosition );
+            if( cdist < dist ) {
+                dist = cdist;
+                nearest = light;
+            }
+        }
+        if( nearest ) {
+            TVec3 pos = nearest->owner->globalPosition;
+            Renderer_CheckCgError( cgSetParameter3f( gRenderer->lightProgram.vLightPosition, pos.x, pos.y, pos.z ));
+            Renderer_CheckCgError( cgSetParameter1f( gRenderer->lightProgram.vLightRange, nearest->radius ));
+            Renderer_CheckCgError( cgSetParameter3f( gRenderer->lightProgram.vLightColor, nearest->color.x, nearest->color.y, nearest->color.z ));
+        }
+    } else {
+        Renderer_CheckCgError( cgGLBindProgram( gRenderer->lightmapProgram.fragment ));
+        Renderer_CheckCgError( cgGLBindProgram( gRenderer->lightmapProgram.vertex ));
+        
+        Renderer_CheckCgError( cgSetMatrixParameterfr( gRenderer->lightmapProgram.vMVP, mvp.f ));      
     }
+    
+
     
     if( !surf->facesSorted ) {
         Surface_SortFaces( surf );
@@ -355,9 +413,6 @@ void Renderer_InitializeFull( const TRenderSettings * settings ) {
 
 void Renderer_RenderWorld() { 
     if( pActiveCamera ) {
-        Renderer_BindShader( &gRenderer->vertexShader );
-        Renderer_BindShader( &gRenderer->fragmentShader );
-        
         for_each( TEntity, entity, g_entities ) {
             Entity_CalculateGlobalTransform( entity );
 
@@ -371,7 +426,6 @@ void Renderer_RenderWorld() {
                 glBlendFunc( GL_SRC_ALPHA, GL_ONE );
             }  
             
-
             if( visible ) {
                 if( entity->componentBillboard ) {      
                     TBillboard * billboard = entity->componentBillboard;
@@ -408,27 +462,25 @@ void Renderer_RenderWorld() {
                 } else if ( entity->componentLight ) {
                     // there is no special code to draw this
                 } else {
-                    TMatrix4 modelView;
+                    TMatrix4 modelViewProjection;
                     if( entity->skinned ) {
-                        modelView = pActiveCamera->viewMatrix;
+                        modelViewProjection = pActiveCamera->viewMatrix;
                     } else {
-                        modelView = Matrix4_Multiply( entity->globalTransform, pActiveCamera->viewMatrix );
+                        modelViewProjection = Matrix4_Multiply( entity->globalTransform, pActiveCamera->viewMatrix );
                     };
-
-                    Renderer_SetModelViewTransform( modelView );
                     
                     bool depthHack = fabsf( entity->depthHack ) > 0.0f ;
                     if( depthHack ) {
-                        Camera_EnterDepthHack( pActiveCamera, entity->depthHack );
-                        Renderer_SetProjectionTransform( pActiveCamera->projectionMatrix );
-                    }
+                        Camera_EnterDepthHack( pActiveCamera, entity->depthHack );                        
+                    }                
+                    modelViewProjection = Matrix4_Multiply( modelViewProjection, pActiveCamera->projectionMatrix );
                     for_each( TSurface, surface, entity->surfaces ) {
-                        Renderer_RenderSurface( surface, &entity->color );
+                        Renderer_RenderSurface( surface, modelViewProjection, entity );
                     }  
                     if( depthHack ) {
                         Camera_LeaveDepthHack( pActiveCamera );
                         Renderer_SetProjectionTransform( pActiveCamera->projectionMatrix );
-                    }
+                   }
                 }                
             }
             if( entity->alpha < 0.99f ) {
@@ -436,34 +488,34 @@ void Renderer_RenderWorld() {
             }
         }
     }
-}
+    
+    glDisable( GL_DEPTH_TEST );
+    glDisable( GL_CULL_FACE );
+    glEnable( GL_BLEND );
+    glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 
-void Renderer_Enable2DMode( bool state ) {
-    if( state ) {
-        glDisable( GL_DEPTH_TEST );
-        glDisable( GL_CULL_FACE );
-        glEnable( GL_BLEND );
-        glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-        Renderer_BindShader( &gRenderer->guiVertexShader );
-        Renderer_BindShader( &gRenderer->guiFragmentShader );
-        Renderer_SetModelViewTransform( Matrix4_Identity() );    
-        Renderer_SetProjectionTransform( Matrix4_Ortho2D( 0, Renderer_GetWindowWidth(), Renderer_GetWindowHeight(), 0.0f, 0.0, 1.0f ));
-    } else {
-        Renderer_BindShader( &gRenderer->vertexShader );
-        Renderer_BindShader( &gRenderer->fragmentShader );
-        glClearDepth( 1.0f );
-        glEnable( GL_DEPTH_TEST );
-        glDisable( GL_BLEND );
-        glDepthFunc( GL_LEQUAL );
-        glHint( GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST );
-        glEnable( GL_TEXTURE_2D );
-        glShadeModel( GL_SMOOTH );
-        glEnable( GL_CULL_FACE );
-        glDisable( GL_STENCIL_TEST );
-        glCullFace( GL_BACK );    
-        glEnable( GL_ALPHA_TEST );
-        glAlphaFunc( GL_GREATER, 0.025f );
-    }
+    Renderer_CheckCgError( cgGLBindProgram( gRenderer->guiProgram.fragment ));
+    Renderer_CheckCgError( cgGLBindProgram( gRenderer->guiProgram.vertex ));  
+    TMatrix4 projection = Matrix4_Ortho2D( 0, Renderer_GetWindowWidth(), Renderer_GetWindowHeight(), 0.0f, 0.0, 1.0f );        
+    Renderer_CheckCgError( cgSetMatrixParameterfr( gRenderer->guiProgram.vProjection, projection.f ));
+    cgUpdateProgramParameters( gRenderer->guiProgram.fragment );
+    cgUpdateProgramParameters( gRenderer->guiProgram.vertex );    
+    
+    GUI_Render();
+    
+    glClearDepth( 1.0f );
+    glEnable( GL_DEPTH_TEST );
+    glDisable( GL_BLEND );
+    glDepthFunc( GL_LEQUAL );
+    glHint( GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST );
+    glEnable( GL_TEXTURE_2D );
+    glShadeModel( GL_SMOOTH );
+    glEnable( GL_CULL_FACE );
+    glDisable( GL_STENCIL_TEST );
+    glCullFace( GL_BACK );    
+    glEnable( GL_ALPHA_TEST );
+    glAlphaFunc( GL_GREATER, 0.025f );
+    
 }
 
 void Renderer_SetModelViewTransform( TMatrix4 modelView ) {
@@ -698,25 +750,7 @@ void Renderer_InitializeOpenGL( ) {
         glMultiTexCoord2f = (PFNGLMULTITEXCOORD2FARBPROC)wglGetProcAddress ( "glMultiTexCoord2fARB" );
         glMultiTexCoord2fv = (PFNGLMULTITEXCOORD2FVARBPROC)wglGetProcAddress ( "glMultiTexCoord2fvARB" );
     }   
-    
-    if( !strstr( exts, "GL_ARB_fragment_program" ) || !strstr( exts, "GL_ARB_vertex_program")) {
-        Util_RaiseError( "GL_ARB_fragment_program and GL_ARB_vertex_program are not supported! Initialization failed!" );
-    } else {
-        glGetProgramivARB = (PFNGLGETPROGRAMIVARBPROC)wglGetProcAddress( "glGetProgramivARB" );
-        glProgramStringARB = (PFNGLPROGRAMSTRINGARBPROC)wglGetProcAddress( "glProgramStringARB" );
-        glBindProgramARB = (PFNGLBINDPROGRAMARBPROC)wglGetProcAddress( "glBindProgramARB" );
-        glDeleteProgramsARB = (PFNGLDELETEPROGRAMSARBPROC)wglGetProcAddress( "glDeleteProgramsARB" );
-        glGenProgramsARB = (PFNGLGENPROGRAMSARBPROC)wglGetProcAddress( "glGenProgramsARB" );
-        glProgramEnvParameter4fARB = (PFNGLPROGRAMENVPARAMETER4FARBPROC)wglGetProcAddress( "glProgramEnvParameter4fARB" );
-        glProgramEnvParameter4fvARB = (PFNGLPROGRAMENVPARAMETER4FVARBPROC)wglGetProcAddress( "glProgramEnvParameter4fvARB" );
-        glProgramLocalParameter4fARB = (PFNGLPROGRAMLOCALPARAMETER4FARBPROC)wglGetProcAddress( "glProgramLocalParameter4fARB" );
-        glProgramLocalParameter4fvARB = (PFNGLPROGRAMLOCALPARAMETER4FVARBPROC)wglGetProcAddress( "glProgramLocalParameter4fvARB" );
-        glGetProgramEnvParameterfvARB = (PFNGLGETPROGRAMENVPARAMETERFVARBPROC)wglGetProcAddress( "glGetProgramEnvParameterfvARB" );
-        glGetProgramLocalParameterfvARB = (PFNGLGETPROGRAMLOCALPARAMETERFVARBPROC)wglGetProcAddress( "glGetProgramLocalParameterfvARB" );
-        glGetProgramStringARB = (PFNGLGETPROGRAMSTRINGARBPROC)wglGetProcAddress( "glGetProgramStringARB" );
-        glIsProgramARB = (PFNGLISPROGRAMARBPROC)wglGetProcAddress( "glIsProgramARB" );
-    }
-    
+       
     if( !strstr( exts, "GL_ARB_texture_compression" )) {
         Util_RaiseError( "GL_ARB_texture_compression not supported! Initialization failed!" );
     }
@@ -749,85 +783,42 @@ void Renderer_InitializeOpenGL( ) {
 
     Log_Write( "InitializeOpenGL: success" );
     Log_Write( "OpenGL version: %s", glGetString( GL_VERSION ) );
-    
-    
-    Shader_LoadFromFile( &gRenderer->vertexShader, "data/shaders/vertex.shr" );
-    Shader_LoadFromFile( &gRenderer->fragmentShader, "data/shaders/fragment.shr" );
-    
-    Shader_LoadFromFile( &gRenderer->guiVertexShader, "data/shaders/gui_vertex.shr" );
-    Shader_LoadFromFile( &gRenderer->guiFragmentShader, "data/shaders/gui_fragment.shr" );
+
+    Renderer_CheckCgError( gRenderer->cgContext = cgCreateContext());
+    Renderer_CheckCgError( gRenderer->bestVertexProfile = cgGLGetLatestProfile( CG_GL_VERTEX ));
+    Renderer_CheckCgError( cgGLSetOptimalOptions( gRenderer->bestVertexProfile ));
+    Renderer_CheckCgError( cgGLEnableProfile( gRenderer->bestVertexProfile ));
+    Renderer_CheckCgError( gRenderer->bestFragmentProfile = cgGLGetLatestProfile( CG_GL_FRAGMENT ));
+    Renderer_CheckCgError( cgGLSetOptimalOptions( gRenderer->bestFragmentProfile ));               
+    Renderer_CheckCgError( cgGLEnableProfile( gRenderer->bestFragmentProfile ));
+        
+    Renderer_CheckCgError( gRenderer->lightmapProgram.vertex = cgCreateProgramFromFile( gRenderer->cgContext, CG_SOURCE, "data/shaders/release/lightmap.cgv", gRenderer->bestVertexProfile, "main", NULL ));
+    Renderer_CheckCgError( cgGLLoadProgram( gRenderer->lightmapProgram.vertex ));
+    Renderer_CheckCgError( gRenderer->lightmapProgram.vMVP = cgGetNamedParameter( gRenderer->lightmapProgram.vertex, "modelViewProj" ));    
+    Renderer_CheckCgError( gRenderer->lightmapProgram.fragment = cgCreateProgramFromFile( gRenderer->cgContext, CG_SOURCE, "data/shaders/release/lightmap.cgf", gRenderer->bestFragmentProfile, "main", NULL ));
+    Renderer_CheckCgError( cgGLLoadProgram( gRenderer->lightmapProgram.fragment ));
   
-    unsigned char whitePixel[4] = { 255, 255, 255, 255 };
-    Debug_CheckGLError( glGenTextures( 1, &gRenderer->whitePixelTexture ));
-    Debug_CheckGLError( glBindTexture( GL_TEXTURE_2D, gRenderer->whitePixelTexture ));
-    Debug_CheckGLError( glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, whitePixel ));
-    Debug_CheckGLError( glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR ));
-    Debug_CheckGLError( glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR ));
-    Debug_CheckGLError( glBindTexture( GL_TEXTURE_2D, 0 ));
-    
-    int maxAttribs;
-    int maxLocalParameters;
-    int maxEnvParameters;
-    int maxMatrices;
-    int maxTemporaries;
-    int maxParams;
-    int maxAddressRegisters;
-    
-    Debug_CheckGLError( glGetIntegerv( GL_MAX_PROGRAM_MATRICES_ARB, &maxMatrices ));
-    
-    // vertex program
-    Debug_CheckGLError( glGetProgramivARB( GL_VERTEX_PROGRAM_ARB, GL_MAX_PROGRAM_ATTRIBS_ARB, &maxAttribs ));
-    Debug_CheckGLError( glGetProgramivARB( GL_VERTEX_PROGRAM_ARB, GL_MAX_PROGRAM_LOCAL_PARAMETERS_ARB, &maxLocalParameters ));
-    Debug_CheckGLError( glGetProgramivARB( GL_VERTEX_PROGRAM_ARB, GL_MAX_PROGRAM_ENV_PARAMETERS_ARB, &maxEnvParameters ));    
-    Debug_CheckGLError( glGetProgramivARB( GL_VERTEX_PROGRAM_ARB, GL_MAX_PROGRAM_TEMPORARIES_ARB, &maxTemporaries ));
-    Debug_CheckGLError( glGetProgramivARB( GL_VERTEX_PROGRAM_ARB, GL_MAX_PROGRAM_PARAMETERS_ARB, &maxParams ));
-    Debug_CheckGLError( glGetProgramivARB( GL_VERTEX_PROGRAM_ARB, GL_MAX_PROGRAM_ADDRESS_REGISTERS_ARB, &maxAddressRegisters ));
-    
-    Log_Write( "Vertex program limits:            " );
-    Log_Write( "    attributes:                 %d", maxAttribs );
-    Log_Write( "    local parameters:           %d", maxLocalParameters );
-    Log_Write( "    env parameters:             %d", maxEnvParameters );
-    Log_Write( "    program matrices:           %d", maxMatrices );
-    Log_Write( "    program temporaries:        %d", maxTemporaries );
-    Log_Write( "    program parameters:         %d", maxParams );
-    Log_Write( "    program address registers:  %d", maxAddressRegisters );
-    
-    // fragment program
-    Debug_CheckGLError( glGetProgramivARB( GL_FRAGMENT_PROGRAM_ARB, GL_MAX_PROGRAM_ATTRIBS_ARB, &maxAttribs ));
-    Debug_CheckGLError( glGetProgramivARB( GL_FRAGMENT_PROGRAM_ARB, GL_MAX_PROGRAM_LOCAL_PARAMETERS_ARB, &maxLocalParameters ));
-    Debug_CheckGLError( glGetProgramivARB( GL_FRAGMENT_PROGRAM_ARB, GL_MAX_PROGRAM_ENV_PARAMETERS_ARB, &maxEnvParameters ));
-    Debug_CheckGLError( glGetProgramivARB( GL_FRAGMENT_PROGRAM_ARB, GL_MAX_PROGRAM_TEMPORARIES_ARB, &maxTemporaries ));
-    Debug_CheckGLError( glGetProgramivARB( GL_FRAGMENT_PROGRAM_ARB, GL_MAX_PROGRAM_PARAMETERS_ARB, &maxParams ));
-
-    Log_Write( "Fragment program limits:            " );
-    Log_Write( "    attributes:                 %d", maxAttribs );
-    Log_Write( "    local parameters:           %d", maxLocalParameters );
-    Log_Write( "    env parameters:             %d", maxEnvParameters );
-    Log_Write( "    program matrices:           %d", maxMatrices );
-    Log_Write( "    program temporaries:        %d", maxTemporaries );
-    Log_Write( "    program parameters:         %d", maxParams );
-}
-
-
-void Util_CheckGLErrorFunc( const char * file, int line,  const char * func  ) {
-    GLenum g = glGetError();
-    switch (g) {
-    case GL_INVALID_ENUM:
-        Util_RaiseError( "OpenGL Error: GL_INVALID_ENUM in '%s' in line %d in function %s", file, line, func );
-    case GL_INVALID_VALUE:
-        Util_RaiseError( "OpenGL Error: GL_INVALID_VALUE in '%s' in line %d in function %s", file, line, func );
-    case GL_INVALID_OPERATION:
-        Util_RaiseError( "OpenGL Error: GL_INVALID_OPERATION in '%s' in line %d in function %s", file, line, func );
-    case GL_STACK_OVERFLOW:
-        Util_RaiseError( "OpenGL Error: GL_STACK_OVERFLOW in '%s' in line %d in function %s", file, line, func );
-    case GL_STACK_UNDERFLOW:
-        Util_RaiseError( "OpenGL Error: GL_STACK_UNDERFLOW in '%s' in line %d in function %s", file, line, func );
-    case GL_OUT_OF_MEMORY:
-        Util_RaiseError( "OpenGL Error: GL_OUT_OF_MEMORY in '%s' in line %d in function %s", file, line, func );
-    };
+    Renderer_CheckCgError( gRenderer->lightProgram.vertex = cgCreateProgramFromFile( gRenderer->cgContext, CG_SOURCE, "data/shaders/release/light.cgv", gRenderer->bestVertexProfile, "main", NULL ));
+    Renderer_CheckCgError( cgGLLoadProgram( gRenderer->lightProgram.vertex ));
+    Renderer_CheckCgError( gRenderer->lightProgram.vMVP = cgGetNamedParameter( gRenderer->lightProgram.vertex, "modelViewProj" )); 
+    Renderer_CheckCgError( gRenderer->lightProgram.vWorld = cgGetNamedParameter( gRenderer->lightProgram.vertex, "world" ));    
+    Renderer_CheckCgError( gRenderer->lightProgram.vLightPosition = cgGetNamedParameter( gRenderer->lightProgram.vertex, "lightPosition" ));  
+    Renderer_CheckCgError( gRenderer->lightProgram.vLightRange = cgGetNamedParameter( gRenderer->lightProgram.vertex, "lightRange" ));  
+    Renderer_CheckCgError( gRenderer->lightProgram.vLightColor = cgGetNamedParameter( gRenderer->lightProgram.vertex, "lightColor" ));  
+    Renderer_CheckCgError( gRenderer->lightProgram.vAmbientColor = cgGetNamedParameter( gRenderer->lightProgram.vertex, "ambientColor" ));  
+    Renderer_CheckCgError( gRenderer->lightProgram.fragment = cgCreateProgramFromFile( gRenderer->cgContext, CG_SOURCE, "data/shaders/release/light.cgf", gRenderer->bestFragmentProfile, "main", NULL ));
+    Renderer_CheckCgError( cgGLLoadProgram( gRenderer->lightProgram.fragment ));
+      
+    Renderer_CheckCgError( gRenderer->guiProgram.vertex = cgCreateProgramFromFile( gRenderer->cgContext, CG_SOURCE, "data/shaders/release/gui.cgv", gRenderer->bestVertexProfile, "main", NULL ));
+    Renderer_CheckCgError( cgGLLoadProgram( gRenderer->guiProgram.vertex ));
+    Renderer_CheckCgError( gRenderer->guiProgram.vProjection = cgGetNamedParameter( gRenderer->guiProgram.vertex, "projection" ));       
+    Renderer_CheckCgError( gRenderer->guiProgram.fragment = cgCreateProgramFromFile( gRenderer->cgContext, CG_SOURCE, "data/shaders/release/gui.cgf", gRenderer->bestFragmentProfile, "main", NULL ));
+    Renderer_CheckCgError( cgGLLoadProgram( gRenderer->guiProgram.fragment ));
+    Renderer_CheckCgError( gRenderer->guiProgram.pColor = cgGetNamedParameter( gRenderer->guiProgram.fragment, "color" ));  
 }
 
 void Renderer_FreeOpenGL() {
+    Renderer_CheckCgError( cgDestroyContext( gRenderer->cgContext ));
     wglMakeCurrent( 0, 0 );
     wglDeleteContext( gRenderer->glContext );
     Log_Write( "FreeOpenGL: success" );
@@ -853,18 +844,6 @@ int Renderer_GetWindowWidth( void ) {
 
 int Renderer_GetWindowHeight( void ) {
     return gRenderer->settings.height;
-}
-
-void Renderer_SetShaderLocal( TShader * shader, int index, float x, float y, float z, float w ) {
-    glProgramLocalParameter4fARB( shader->target, index, x, y, z, w );
-}
-
-void Renderer_BindShader( TShader * shader ) {
-    if( shader ) {
-        glBindProgramARB( shader->target, shader->id );        
-    } else {
-        Util_RaiseError( "Unable to set shader!" );
-    }
 }
 
 void Renderer_EndRender() {

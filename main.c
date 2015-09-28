@@ -110,7 +110,7 @@ int main( int argc, char * argv[] ) {
             
             gameLogicTime += Timer_GetElapsedMilliseconds( &perfTimer );
         }
-        GUI_Render();
+        
         Renderer_EndRender( );
  
         if( Timer_GetElapsedSeconds( &fpsTimer ) >= 1.0 ) {

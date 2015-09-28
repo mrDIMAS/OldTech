@@ -97,7 +97,6 @@ float Lightmap_CalculateAttenuation( const TVec3 * src, const TVec3 * dst, float
 void Lightmap_Build( const TVec3 * offset, TLightmap * lm, TVertex * a, TVertex * b, TVertex * c, int faceID, int threadNum );
 
 // basic function to generate lightmap for surface
-void Lightmap_BuildForSurface( struct TSurface * surf,  const TVec3 * offset );
 void Lightmap_BuildForSurfaceMultithreaded( struct TSurface * surf, TVec3 * offset, int surfNum, int totalSurfaces );
 
 void LightmapAtlas_SaveSurfaceAtlases( struct TSurface * surf, const char * path );

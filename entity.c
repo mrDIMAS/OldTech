@@ -268,54 +268,44 @@ void Entity_SetAnimation( TEntity * ent, TAnimation * anim ) {
     }
 }
 
-void Entity_SetAnimationEnabled( TEntity * ent, bool state ) {
-    ent->animationEnabled = state;
-    // also process childs
-    for_each( TEntity, child, ent->childs ) {
-        child->animationEnabled = state;
-    }
-}
-
 void Entity_Animate( TEntity * ent ) {
-    if( ent->animationEnabled ) {
-        // skeletal animation 
-        if( ent->skinned ) {
-            for_each( TSurface, surface, ent->surfaces ) {
-                // firstly, compute transformation of the each bone affecting this surface
-                for_each( TBone, bone, surface->bones ) {
-                    bone->transform = Matrix4_Multiply( bone->boneEnt->invBindTransform, bone->boneEnt->globalTransform  );
-                    //Matrix4_Multiply( &bone->transform, &bone->transform , &ent->globalTransform );                    
-                    bone->transform = Matrix4_Multiply( ent->globalTransform, bone->transform );                    
-                }
-                // mark buffers as 'not processed' for the renderer
-                surface->buffersReady = false;
-                // finally, do skeletal animation                 
-                for( int i = 0; i < surface->vertexCount; i++ ) {
-                    TVertex * vertex = surface->vertices + i;
-                    TVertex * skinVertex = surface->skinVertices + i;
-                    TBoneGroup * bg = surface->vertexBones + i;
-                    skinVertex->p = Vec3_Zero();
-                    for( int k = 0; k < bg->boneCount; k++ ) {
-                        TBone * bone = &bg->bones[k];
-                        // transform vertex 
-                        TVec3 transformed = Matrix4_TransformVector( bone->transform, vertex->p );
-                        skinVertex->p = Vec3_Add( skinVertex->p, Vec3_Scale( transformed, bone->weight ));
-                    }
+    // skeletal animation 
+    if( ent->skinned ) {
+        for_each( TSurface, surface, ent->surfaces ) {
+            // firstly, compute transformation of the each bone affecting this surface
+            for_each( TBone, bone, surface->bones ) {
+                bone->transform = Matrix4_Multiply( bone->boneEnt->invBindTransform, bone->boneEnt->globalTransform  );                  
+                bone->transform = Matrix4_Multiply( ent->localTransform, bone->transform );    // correct ??    
+                //bone->transform = Matrix4_Multiply( ent->globalTransform, bone->transform );               
+            }
+            // mark buffers as 'not processed' for the renderer
+            surface->buffersReady = false;
+            // finally, do skeletal animation                 
+            for( int i = 0; i < surface->vertexCount; i++ ) {
+                TVertex * vertex = surface->vertices + i;
+                TVertex * skinVertex = surface->skinVertices + i;
+                TBoneGroup * bg = surface->vertexBones + i;
+                skinVertex->p = Vec3_Zero();
+                for( int k = 0; k < bg->boneCount; k++ ) {
+                    TBone * bone = &bg->bones[k];
+                    // transform vertex 
+                    TVec3 transformed = Matrix4_TransformVector( bone->transform, vertex->p );
+                    skinVertex->p = Vec3_Add( skinVertex->p, Vec3_Scale( transformed, bone->weight ));
                 }
             }
-        } else {
-            // keyframe animation 
-            if( ent->anim ) {
-                if( ent->keyFrames.size ) {
-                    TKeyFrame * currentFrame = List_GetNodeData( &ent->keyFrames, ent->anim->curFrame );
-                    TKeyFrame * nextFrame = List_GetNodeData( &ent->keyFrames, ent->anim->nextFrame );
-
-                    ent->localRotation = Quaternion_Slerp( currentFrame->rot, nextFrame->rot, ent->anim->interp );
-                    ent->localPosition = Vec3_Lerp( currentFrame->pos, nextFrame->pos, ent->anim->interp );
-                }
-            } 
         }
-    }
+    } else {
+        // keyframe animation 
+        if( ent->anim ) {
+            if( ent->keyFrames.size ) {
+                TKeyFrame * currentFrame = List_GetNodeData( &ent->keyFrames, ent->anim->curFrame );
+                TKeyFrame * nextFrame = List_GetNodeData( &ent->keyFrames, ent->anim->nextFrame );
+
+                ent->localRotation = Quaternion_Slerp( currentFrame->rot, nextFrame->rot, ent->anim->interp );
+                ent->localPosition = Vec3_Lerp( currentFrame->pos, nextFrame->pos, ent->anim->interp );
+            }
+        } 
+    }    
 }
 
 void Entity_ApplyProperties( TEntity * ent ) {

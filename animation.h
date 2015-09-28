@@ -13,6 +13,7 @@ typedef struct {
     int nextFrame;
     float frameDelta;
     float duration;
+    bool enabled;
 } TAnimation;
 
 TAnimation * Animation_Create( int begFrame, int endFrame, float duration );

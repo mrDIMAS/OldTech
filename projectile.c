@@ -1,6 +1,6 @@
 #include "Projectile.h"
 #include "weapon.h"
-
+#include "player.h"
 
 
 typedef struct TProjectileSoundBase {
@@ -39,8 +39,18 @@ void Projectile_LoadSoundBufferBase( void ) {
 void Projectile_Update( TProjectile * proj ) {
     if( proj->lifeTime > 0 ) {
         proj->lifeTime--;
-
-    
+            
+        TRayTraceResult result;
+        TRay ray = Ray_SetDirection( proj->model->globalPosition, proj->direction );
+        Ray_TraceWorldDynamic( &ray, &result );
+        
+        if( result.body ) {
+            if( result.body != &player->body ) {
+                if( Vec3_Distance( result.position, proj->model->globalPosition ) < 1.0f ) {
+                    proj->lifeTime = 0;
+                }
+            }
+        };
         if( proj->futureHit ) {
             if( proj->doneDistance > proj->futureHitDistance ) {
                 if( proj->futureHitResult.triangle ) {
@@ -50,6 +60,8 @@ void Projectile_Update( TProjectile * proj ) {
                 proj->lifeTime = 0;
             }
         }
+        
+    
         
         proj->model->localPosition = Vec3_Add( proj->model->localPosition, Vec3_Scale( proj->direction, proj->velocity ));
         
@@ -99,8 +111,12 @@ void Projectile_DoPrecalculations( TProjectile * proj ) {
     TRay ray = Ray_SetDirection( proj->model->localPosition, Vec3_Scale( proj->direction, 10000.0f ));    
     Ray_TraceWorld( &ray, &proj->futureHitResult );	    
     if( proj->futureHitResult.body ) {
-        proj->futureHitDistance = Vec3_Distance( proj->model->localPosition, proj->futureHitResult.position );
-        proj->futureHit = true;
+        if( proj->futureHitResult.body != &player->body ) {
+            proj->futureHitDistance = Vec3_Distance( proj->model->localPosition, proj->futureHitResult.position );
+            proj->futureHit = true;
+        } else {
+            proj->futureHit = false;
+        }
     } else {
         proj->futureHit = false;
     }    

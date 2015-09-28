@@ -47,7 +47,7 @@ TWeapon * Weapon_Create( EWeaponType type ) {
         break;		
     }
     List_Create( &wpn->projectiles );
-    Entity_SetDepthHack( wpn->model, 0.175f );
+    //Entity_SetDepthHack( wpn->model, 0.175f );
 	return wpn;
 }
 

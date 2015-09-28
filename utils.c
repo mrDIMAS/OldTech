@@ -28,7 +28,8 @@ void Util_Message( const char * format, ... ) {
 
 
 void Util_RaiseError( const char * format, ... ) {
-    __builtin_trap(); // raise breakpoint
+    //__builtin_trap(); // raise breakpoint
+    
     va_list	argumentList;
     char buffer[4096];
     va_start(argumentList, format );

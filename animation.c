@@ -17,6 +17,7 @@ TAnimation * Animation_Create( int begFrame, int endFrame, float duration ) {
     anim->duration = duration;
     anim->frameDelta = endFrame - begFrame;
     anim->interp = 0.0f;
+    anim->enabled = false;
     List_Add( &gAnimations, anim );
     return anim;
 }
@@ -40,6 +41,8 @@ void Animation_Update( TAnimation * anim, float dt ) {
 
 void Animation_UpdateAll( void ) {
     for_each( TAnimation, anim, gAnimations ) {
-        Animation_Update( anim, 1.0f / 60.0f );
+        if( anim->enabled ) {
+            Animation_Update( anim, 1.0f / 60.0f );
+        }
     }
 }

@@ -8,6 +8,7 @@
 #include "collision.h"
 #include "font.h"
 #include "shader.h"
+#include "entity.h"
 
 typedef struct {
     short width;
@@ -30,7 +31,7 @@ typedef struct TGlyphRenderInfo {
     TVec3 color;
 } TGlyphRenderInfo;
 
-void Renderer_RenderSurface( TSurface * surf, const TVec3 * color );
+void Renderer_RenderSurface( TSurface * surf, TMatrix4 mvp, struct TEntity * owner );
 void Renderer_SetResolution( int width, int height, int bpp );
 void Renderer_SetModelViewTransform( TMatrix4 modelView );
 void Renderer_SetProjectionTransform( TMatrix4 proj );
@@ -56,12 +57,8 @@ void Renderer_BuildSurfaceBuffers( TSurface * surf );
 void Renderer_BindSurface( TSurface * surf );
 void Renderer_RenderRect( float x, float y, float x2, float y2, TVec3 color );
 void Renderer_RenderGlyph( const TGlyphRenderInfo * ri );
-void Renderer_Enable2DMode( bool state );
 void Renderer_LoadTextureFromMemory( TTexture * texture, int width, int height, int bytePerPixel, void * data, bool generateMIPS );
 void Renderer_FreeTexture( TTexture * texture );
-void Renderer_CompileARBShader( TShader * shader, char * program, int size );
-void Renderer_SetShaderLocal( TShader * shader, int index, float x, float y, float z, float w );
-void Renderer_BindShader( TShader * shader );
 int Renderer_GetWindowWidth( void );
 int Renderer_GetWindowHeight( void );
 

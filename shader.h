@@ -14,6 +14,6 @@ typedef struct {
     EShaderType type;
 } TShader;
 
-void Shader_LoadFromFile( TShader * shader, const char * filename );
+//void Shader_LoadFromFile( TShader * shader, const char * filename );
 
 #endif

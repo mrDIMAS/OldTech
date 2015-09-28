@@ -183,8 +183,7 @@ bool GUI_MouseInsideRectangle( int x, int y, int w, int h ){
            (mouseY >= y) && (mouseY <= (y + h));
 }
 
-void GUI_Render( void ) {
-    Renderer_Enable2DMode( true );        
+void GUI_Render( void ) {     
     for_each( TGUINode, node, gGUINodeList ) { 
         if( GUI_IsNodeVisible( node ) ) {
             TVector2 absPos = GUI_GetNodeAbsolutePosition( node );
@@ -306,5 +305,4 @@ void GUI_Render( void ) {
             }
         }
     }      
-    Renderer_Enable2DMode( false );
 }

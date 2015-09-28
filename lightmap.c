@@ -192,7 +192,7 @@ void Lightmap_Build( const TVec3 * offset, TLightmap * lm, TVertex * a, TVertex 
     lm->faceID = faceID;
     
     // generate lightmap texture coordinates by projecting triangle on a proper plane, aligned on axes ( such oXY and so on )
-    TVec3 triangleNormal;    
+    TVec3 triangleNormal;
     Triangle_CalculateNormalUnnormalized( &triangleNormal, &a->p, &b->p, &c->p );     
     
     int plane = GetPlaneWithLongestNormal( &triangleNormal );
@@ -248,7 +248,7 @@ void Lightmap_Build( const TVec3 * offset, TLightmap * lm, TVertex * a, TVertex 
     lm->width = faceWidth * 8;
     lm->height = faceHeight * 8;
     
-    const int borderSize = 2; 
+    const int borderSize = 3; 
     
     // lightmap texture must be at least 4x4 pixels size + border size
     const int lowerLimit = 8 + borderSize;
@@ -290,7 +290,7 @@ void Lightmap_Build( const TVec3 * offset, TLightmap * lm, TVertex * a, TVertex 
     c->t2.x = ( c->t2.x + offsetX ) * scaleCoeffX;
     c->t2.y = ( c->t2.y + offsetY ) * scaleCoeffY;   
    
-    triangleNormal = Vec3_Normalize( triangleNormal );
+    //triangleNormal = Vec3_Normalize( triangleNormal );
     
     List_Create( &lm->layers );
     
@@ -333,7 +333,10 @@ void Lightmap_Build( const TVec3 * offset, TLightmap * lm, TVertex * a, TVertex 
                 // diffuse lighting
                 TVec3 direction;
                 float attenuation = Lightmap_CalculateAttenuation( &light->owner->globalPosition, &worldPosition, light->radius, &direction );
-                attenuation *= Vec3_Dot( triangleNormal, direction );
+                
+                TVec3 interpolatedNormal;
+                Barycentric_MapToWorld( &interpolatedNormal, &a->n, &b->n, &c->n, &barycentricCoord );
+                attenuation *= Vec3_Dot( interpolatedNormal, direction );
                 
                 // TODO: there should be added bump-mapping
                 //
@@ -652,29 +655,6 @@ void Lightmap_PrepareSurface( TSurface * surf ) {
     
     surf->vertices = newVertices;
     surf->vertexCount = newVertexCount;
-}
-
-void Lightmap_BuildForSurface( TSurface * surf, const TVec3 * offset ) {
-    
-    Lightmap_PrepareSurface( surf );
-
-    Log_Write( "Lightmapper: - Generating lightmap for surface..." );
-    TLightmap * lightmaps = Memory_NewCount( surf->faceCount, TLightmap );    
-    for( int i = 0; i < surf->faceCount; i++ ) {
-        TFace * face = &surf->faces[i];
-        
-        TVertex * a = &surf->vertices[ face->index[ 0 ]];
-        TVertex * b = &surf->vertices[ face->index[ 1 ]];
-        TVertex * c = &surf->vertices[ face->index[ 2 ]];
-        
-        Lightmap_Build( offset, &lightmaps[i], a, b, c, i, -1 );
-    }
-    
-    surf->lightmapped = true;
-    
-    LightmapPacker_PackLightmaps( surf, lightmaps, 0 );  
-    Log_Write( "Lightmapper: - Generation done!" );
-
 }
 
 // WARNING! Multithreaded lightmap generation contains tricky code, that can damage your brain :D

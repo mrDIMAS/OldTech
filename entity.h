@@ -47,7 +47,6 @@ typedef struct TEntity {
     TAnimation * anim;
     bool visible;
     bool animated;
-    bool animationEnabled;
 	bool globalTransformCalculated;
 	float depthHack;
     TValueArray properties;
@@ -90,7 +89,6 @@ TEntity * Entity_GetChildByName( TEntity * parent, const char * name );
 void Entity_GetGlobalRotation( TEntity * ent, TQuaternion * globRot );
 void Entity_SetDepthHack( TEntity * ent, float depthHack );
 void Entity_ApplyProperties( TEntity * ent );
-void Entity_SetAnimationEnabled( TEntity * ent, bool state );
 void Entity_SetAnimation( TEntity * ent, TAnimation * anim );
 void Entity_Animate( TEntity * ent );
 

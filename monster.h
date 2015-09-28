@@ -9,7 +9,8 @@ typedef struct TMonster {
     float life;
     TAnimation * runAnim;
     TAnimation * attackAnim;
-    TGUINode * debug;
+    TCollisionShape shape;
+    TBody body;
 } TMonster;
 
 TMonster * Monster_Create( void );
