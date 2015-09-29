@@ -140,12 +140,11 @@ typedef struct TCapsuleTriangleIntersectionInfo {
     bool intersects;
 } TCapsuleTriangleIntersectionInfo;
 
-extern float g_gravityAccel;
 extern TDynamicsWorld g_dynamicsWorld;
 
 #define C_EPSILON (0.000001f)
 
-bool EdgeSphereIntersection( const TRay * edgeRay, const TSphereShape * sphere, TVec3 * intersectionPoint );
+bool Intersection_EdgeSphere( const TRay * edgeRay, const TSphereShape * sphere, TVec3 * intersectionPoint );
 
 TRay Ray_Set( TVec3 begin, TVec3 end );
 TRay Ray_SetDirection( TVec3 begin, TVec3 direction );

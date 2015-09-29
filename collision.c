@@ -1,12 +1,19 @@
 #include "collision.h"
 #include <float.h>
 
-float g_gravityAccel = 9.81;
-TDynamicsWorld g_dynamicsWorld = { { NULL, NULL, 0 }, { NULL, NULL, 0 }, NULL, NULL };
+TDynamicsWorld g_dynamicsWorld;
 
 //====================================
-// RAY ROUTINE FUNCTIONS
+// RAY ROUTINE
 //====================================
+TRay Ray_Set( TVec3 begin, TVec3 end ) {
+    return (TRay) { .begin = begin, .end = end, .dir = Vec3_Sub( end, begin ) };
+}
+
+TRay Ray_SetDirection( TVec3 begin, TVec3 direction ) {
+    return (TRay) { .begin = begin, .end = direction, .dir = direction };
+}
+
 bool Intersection_RayPlane( const TRay * ray, const TPlane * plane, TVec3 * outIntersectPoint, ERayType rayType ) {
     // solve plane equation 
     float u = -( Vec3_Dot( ray->begin, plane->normal ) + plane->dist );
@@ -44,16 +51,8 @@ bool Intersection_RayTriangle( const TRay * ray, const TTriangle * triangle, TVe
     return Triangle_CheckPoint( outIntersectPoint, triangle );
 }
 
-TRay Ray_Set( TVec3 begin, TVec3 end ) {
-    return (TRay) { .begin = begin, .end = end, .dir = Vec3_Sub( end, begin ) };
-}
-
-TRay Ray_SetDirection( TVec3 begin, TVec3 direction ) {
-    return (TRay) { .begin = begin, .end = direction, .dir = direction };
-}
-
 //====================================
-// PLANE ROUTINE FUNCTIONS
+// PLANE ROUTINE
 //====================================
 TPlane Plane_SetTriangle( const TTriangle * triangle ) {
     return (TPlane) { .normal = triangle->normal, .dist = triangle->distance };
@@ -162,7 +161,7 @@ void Dynamics_CapsulePolygonCollision( TBody * capsuleBody, TBody * polygon ) {
 }
 
 //====================================
-// TRIANGLE ROUTINE FUNCTIONS
+// TRIANGLE ROUTINE
 //====================================
 void Triangle_Set( TTriangle * triangle, const TVec3 * a, const TVec3 * b, const TVec3 * c ) {
     triangle->a = *a;
@@ -210,14 +209,6 @@ char Triangle_CheckPoint( const TVec3 * point, const TTriangle * triangle ) {
 
     return (u >= 0.0f) && (v >= 0.0f) && (u + v < 1.0f);
 }
-
-void Dynamics_AddConstraint( TConstraint * constraint ) {
-    List_Add( &g_dynamicsWorld.constraints, constraint );
-}
-
-
-
-
 
 bool Geometry_PointOnLineSegment( TVec3 * point, const TVec3 * a, const TVec3 * b ) {
     // simply check, if point lies in bounding box (a,b), means that point is on line 
@@ -328,7 +319,7 @@ TVec3 Geometry_ProjectPointOnLine( TVec3 point, TVec3 a, TVec3 b ) {
 }
 
 //====================================
-// RAY-TRACING ROUTINE FUNCTIONS
+// RAY-TRACING ROUTINE
 //====================================
 void Ray_TraceWorldStatic( TRay * ray, TRayTraceResult * out ) {
     TTriangle * nearestTriangle = 0;
@@ -432,7 +423,7 @@ void Ray_TraceWorldDynamic( TRay * ray, TRayTraceResult * out ) {
     out->triangle = NULL;
 }
 
-bool EdgeSphereIntersection( const TRay * edgeRay, const TSphereShape * sphere, TVec3 * intersectionPoint ) {
+bool Intersection_EdgeSphere( const TRay * edgeRay, const TSphereShape * sphere, TVec3 * intersectionPoint ) {
     if( Intersection_RaySphere( edgeRay, sphere, 0, 0, RAY_INFINITE ) ) {
         *intersectionPoint = Geometry_ProjectPointOnLine( sphere->position, edgeRay->begin, edgeRay->end );
         if( Geometry_PointOnLineSegment( intersectionPoint, &edgeRay->begin, &edgeRay->end ) ) {
@@ -460,13 +451,13 @@ bool Intersection_SphereTriangle( const TSphereShape * sphere, const TTriangle *
             return true;
         } else {       
             //check each triangle edge intersection with the sphere                 
-            if( EdgeSphereIntersection( &triangle->abRay, sphere, intersectionPoint )) {
+            if( Intersection_EdgeSphere( &triangle->abRay, sphere, intersectionPoint )) {
                 return true;
             }
-            if( EdgeSphereIntersection( &triangle->bcRay, sphere, intersectionPoint )) {
+            if( Intersection_EdgeSphere( &triangle->bcRay, sphere, intersectionPoint )) {
                 return true;
             }
-            if(	EdgeSphereIntersection( &triangle->caRay, sphere, intersectionPoint )) {
+            if(	Intersection_EdgeSphere( &triangle->caRay, sphere, intersectionPoint )) {
                 return true;
             }
         }
@@ -747,13 +738,27 @@ void Dynamics_BoxPolygonCollision( TBody * box, TBody * polygon ) {
     (void)polygon;
 }
 
-void Dynamics_CreateWorld() {
-    g_dynamicsWorld.SphereSphereCollisionCallback = NULL;
-    g_dynamicsWorld.SphereTriangleCollisionCallback = NULL;    
-    List_Create( &g_dynamicsWorld.bodies );
-    List_Create( &g_dynamicsWorld.constraints );
+//====================================
+// PHYSICAL BODY ROUTINE
+//====================================
+void Body_Create( TBody * body, TCollisionShape * shape ) {
+    body->shape = shape;
+    body->contactCount = 0;
+    body->elasticity = 0.5f;
+    body->linearVelocity = Vec3_Zero();
+    body->position = Vec3_Zero();
 }
 
+void Body_ApplyGravity( TBody * body ) {
+    static TVec3 gravity = { .x = 0.0f, .y = -0.00666f, .z = 0.0f };
+    body->linearVelocity = Vec3_Add( body->linearVelocity, gravity );
+}
+
+
+
+//====================================
+// CONSTRAINTS ROUTINE
+//====================================
 void Constraint_Create( TConstraint * constraint, TBody * body1, TBody * body2, float linkLength, float stiffness ) {
     constraint->body1 = body1;
     constraint->body2 = body2;
@@ -775,19 +780,19 @@ void Dynamics_SolveConstraints( ) {
     }
 }
 
-void Body_Create( TBody * body, TCollisionShape * shape ) {
-    body->shape = shape;
-    body->contactCount = 0;
-    body->elasticity = 0.5f;
-    body->linearVelocity = Vec3_Zero();
-    body->position = Vec3_Zero();
+//====================================
+// DYNAMICS WORLD ROUTINE
+//====================================
+void Dynamics_AddConstraint( TConstraint * constraint ) {
+    List_Add( &g_dynamicsWorld.constraints, constraint );
 }
 
-void Body_ApplyGravity( TBody * body ) {
-    static TVec3 gravity = { .x = 0.0f, .y = -0.00666f, .z = 0.0f };
-    body->linearVelocity = Vec3_Add( body->linearVelocity, gravity );
+void Dynamics_CreateWorld() {
+    g_dynamicsWorld.SphereSphereCollisionCallback = NULL;
+    g_dynamicsWorld.SphereTriangleCollisionCallback = NULL;    
+    List_Create( &g_dynamicsWorld.bodies );
+    List_Create( &g_dynamicsWorld.constraints );
 }
-
 
 void Dynamics_AddBody( TBody * body ) {
     List_Add( &g_dynamicsWorld.bodies, body );

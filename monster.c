@@ -7,7 +7,7 @@ TMonster * Monster_Create( void ) {
     TMonster * monster = Memory_New( TMonster );
     monster->model = Entity_LoadFromFile( "data/models/monsters/test.scene" );   
     
-    Body_Create( &monster->body, CapsuleShape_Create( Vec3_Set( 0, 0, 0 ), Vec3_Set( 0, 2, 0 ), 0.25f ));
+    Body_Create( &monster->body, CapsuleShape_Create( Vec3_Set( 0, 0, 0 ), Vec3_Set( 0, 1, 0 ), 0.6f ));
     Dynamics_AddBody( &monster->body );
     //monster->body.position = player->body.position;
     monster->body.position = Vec3_Set( 0, 3, 0 );
@@ -32,12 +32,14 @@ void Monster_Think( TMonster * monster ) {
         Entity_SetAnimation( monster->model, monster->attackAnim );
         monster->attackAnim->enabled = true;
         monster->runAnim->enabled = false;
+        monster->body.linearVelocity.x = 0;
+        monster->body.linearVelocity.z = 0;
     } else {
         Entity_SetAnimation( monster->model, monster->runAnim );
         monster->runAnim->enabled = true;
         monster->attackAnim->enabled = false;
-        monster->body.linearVelocity.x = Vec3_Scale( dirNorm, 0.08 ).x;
-        monster->body.linearVelocity.z = Vec3_Scale( dirNorm, 0.08 ).z;
+        monster->body.linearVelocity.x = Vec3_Scale( dirNorm, 0.025 ).x;
+        monster->body.linearVelocity.z = Vec3_Scale( dirNorm, 0.025 ).z;
     }
     monster->model->localRotation = Quaternion_SetAxisAngle( Vec3_Set( 0.0f, 1.0f, 0.0f ), angle );  
     monster->model->localPosition = monster->body.position;

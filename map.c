@@ -59,7 +59,7 @@ TMap * Map_LoadFromFile( const char * fileName ) {
     //LightProbe_Calculate();
     TEntity * playerPos = Entity_GetChildByName( map->root, "PlayerPosition" );
     if( playerPos ) {
-        //player->body.position = playerPos->globalPosition;
+        player->body.position = playerPos->globalPosition;
     } else {
         player->body.position = Vec3_Zero();
         player->body.position.y = 10;
