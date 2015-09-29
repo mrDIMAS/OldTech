@@ -118,6 +118,9 @@ void MainMenu_Create( void ) {
     GUI_SetNodeVisible( menu->authorsWindow->background, false );
     menu->authorsWindow->text = GUI_CreateText( 10, 10, authWidth - 20, authHeight - 20, authText, menu->smallFont );
     GUI_Attach( menu->authorsWindow->text, menu->authorsWindow->background );
+    
+    // DEBUG!!!!!
+    MainMenu_StartGame();
 }
 
 void MainMenu_ShowModalWindow( const char * question, TGUICallback yesAction ) {

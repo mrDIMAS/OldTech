@@ -358,9 +358,9 @@ void Lightmap_Build( const TVec3 * offset, TLightmap * lm, TVertex * a, TVertex 
                     // it with polygons, not texture with alpha channel, this bug must be fixed somehow
                    
                     if( threadNum >= 0 ) {
-                        Ray_TraceWorldMultithreaded( &ray, &rtResult, threadNum ); 
+                        Ray_TraceWorldStaticMultithreaded( &ray, &rtResult, threadNum ); 
                     } else {
-                        Ray_TraceWorld( &ray, &rtResult );  
+                        Ray_TraceWorldStatic( &ray, &rtResult );  
                     }       
                     const float shadowBias = 0.75f;
                     if( rtResult.body ) {

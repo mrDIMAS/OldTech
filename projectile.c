@@ -109,7 +109,7 @@ TProjectile * Projectile_Create( TWeapon * owner, EProjectileType projType, TEnt
 
 void Projectile_DoPrecalculations( TProjectile * proj ) {
     TRay ray = Ray_SetDirection( proj->model->localPosition, Vec3_Scale( proj->direction, 10000.0f ));    
-    Ray_TraceWorld( &ray, &proj->futureHitResult );	    
+    Ray_TraceWorldStatic( &ray, &proj->futureHitResult );	    
     if( proj->futureHitResult.body ) {
         if( proj->futureHitResult.body != &player->body ) {
             proj->futureHitDistance = Vec3_Distance( proj->model->localPosition, proj->futureHitResult.position );

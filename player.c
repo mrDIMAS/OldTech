@@ -157,7 +157,7 @@ void Player_Update( float timeStep ) {
             TVec3 end = Vec3_Set( player->body.position.x, player->body.position.y + 1.0f, player->body.position.z );
             TRay headRay = Ray_Set( player->body.position, end );
             TRayTraceResult out;
-            Ray_TraceWorld( &headRay, &out );
+            Ray_TraceWorldStatic( &headRay, &out );
             if( out.body ) {
                 float maxRadius = player->shape.sphereRadius + 0.4f;
                 if( Vec3_SqrDistance( out.position, player->body.position ) < maxRadius * maxRadius ) {

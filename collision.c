@@ -4,6 +4,46 @@
 float g_gravityAccel = 9.81;
 TDynamicsWorld g_dynamicsWorld = { { NULL, NULL, 0 }, { NULL, NULL, 0 }, NULL, NULL };
 
+//====================================
+// RAY ROUTINE FUNCTIONS
+//====================================
+bool Intersection_RayPlane( const TRay * ray, const TPlane * plane, TVec3 * outIntersectPoint, ERayType rayType ) {
+    // solve plane equation 
+    float u = -( Vec3_Dot( ray->begin, plane->normal ) + plane->dist );
+    float v = Vec3_Dot( ray->dir, plane->normal );
+    float t = u / v;
+
+    // ray miss 
+    if (t < 0.0f) {
+        return false;
+    }
+
+    // find intersection point 
+    *outIntersectPoint = Vec3_Add( ray->begin, Vec3_Scale( ray->dir, t ));
+
+    if( rayType == RAY_INFINITE ) {
+        return true;
+    }
+
+    if( rayType == RAY_LINE_SEGMENT ) {
+        return ((t >= 0.0f) && (t <= 1.0f));
+    }
+
+    // bad ray type 
+    return false;
+}
+
+bool Intersection_RayTriangle( const TRay * ray, const TTriangle * triangle, TVec3 * outIntersectPoint, ERayType rayType ) {
+    // build plane 
+    TPlane plane = Plane_SetTriangle( triangle );
+
+    if( !Intersection_RayPlane( ray, &plane, outIntersectPoint, rayType )) {
+        return false;
+    }
+
+    return Triangle_CheckPoint( outIntersectPoint, triangle );
+}
+
 TRay Ray_Set( TVec3 begin, TVec3 end ) {
     return (TRay) { .begin = begin, .end = end, .dir = Vec3_Sub( end, begin ) };
 }
@@ -12,21 +52,118 @@ TRay Ray_SetDirection( TVec3 begin, TVec3 direction ) {
     return (TRay) { .begin = begin, .end = direction, .dir = direction };
 }
 
-void Plane_SetTriangle( TPlane * plane, const TTriangle * triangle ) {
-    // plane equation is Ax + By + Cz + d = 0 
-    plane->normal = triangle->normal;
-    plane->dist = triangle->distance;
+//====================================
+// PLANE ROUTINE FUNCTIONS
+//====================================
+TPlane Plane_SetTriangle( const TTriangle * triangle ) {
+    return (TPlane) { .normal = triangle->normal, .dist = triangle->distance };
 }
 
-void Plane_Set( TPlane * plane, const TVec3 * normal, float d ) {
-    plane->normal = *normal;
-    plane->dist = d;
+float Plane_Distance( const TPlane * plane, const TVec3 * point ) {
+    return fabs( Vec3_Dot( plane->normal, *point ) + plane->dist );
 }
 
 TSphereShape SphereShape_Set( TVec3 position, float radius ) {
     return (TSphereShape) { .position = position, .radius = radius };
 }
 
+//====================================
+// CAPSULE INTERSECTION AND DYNAMICS
+//====================================
+TCollisionShape * CapsuleShape_Create( TVec3 a, TVec3 b, float radius ) {
+    TCollisionShape * shape = Memory_New( TCollisionShape );
+    shape->capsule = Memory_New( TCapsuleShape );
+    shape->capsule->a = a;
+    shape->capsule->b = b;
+    shape->capsule->radius = radius;
+    return shape;
+}
+
+TVec3 Geometry_ProjectPointOntoPlane( TVec3 point, TVec3 planePoint, TVec3 planeNormal ) {
+    float d = planePoint.x * planeNormal.x + planePoint.y * planeNormal.y + planePoint.z * planeNormal.z;
+    float a = point.x * planeNormal.x + point.y * planeNormal.y + point.z * planeNormal.z - d;
+    return (TVec3) { .x = point.x - a * planeNormal.x, .y = point.y - a * planeNormal.y, .z = point.z - a * planeNormal.z };
+}
+
+TCapsuleTriangleIntersectionInfo Intersection_CapsuleTriangle( const TCapsuleShape * capsule, const TTriangle * triangle ) {
+    TCapsuleTriangleIntersectionInfo outInfo = { 0 };
+    TRay ray = Ray_Set( capsule->a, capsule->b );
+    TPlane plane = Plane_SetTriangle( triangle );
+    TVec3 aProj = Geometry_ProjectPointOntoPlane( capsule->a, triangle->a, plane.normal );
+    TVec3 bProj = Geometry_ProjectPointOntoPlane( capsule->b, triangle->a, plane.normal );    
+    // special case: generatrix intersects plane of the triangle
+    if( Intersection_RayPlane( &ray, &plane, &outInfo.intersectionPoint, RAY_LINE_SEGMENT )) {
+        if( Triangle_CheckPoint( &outInfo.intersectionPoint, triangle )) {
+            TVec3 dA = Vec3_Sub( aProj, capsule->a );
+            TVec3 dB = Vec3_Sub( bProj, capsule->b );
+            float lenD;
+            TVec3 maxD = Vec3_NormalizeEx( Vec3_Max( dA, dB ), &lenD );
+            outInfo.applicableOffset = Vec3_Scale( maxD, lenD + capsule->radius );
+            outInfo.intersects = true;
+            outInfo.normal = maxD;
+        }
+    // common case: generatrix is not intersect plane, but capsule can hit plane by it's volume
+    } else { 
+        bool aInside = Triangle_CheckPoint( &aProj, triangle );
+        bool bInside = Triangle_CheckPoint( &bProj, triangle );
+        float ldA, ldB;
+        TVec3 dA = Vec3_NormalizeEx( Vec3_Sub( capsule->a, aProj ), &ldA );
+        TVec3 dB = Vec3_NormalizeEx( Vec3_Sub( capsule->b, bProj ), &ldB );        
+        if( ldA < capsule->radius && aInside ) {
+            outInfo.applicableOffset = Vec3_Scale( dA, ( capsule->radius - ldA ) );
+            outInfo.intersects = true;
+            outInfo.normal = dA;
+        } else if( ldB < capsule->radius && bInside ) {
+            outInfo.applicableOffset = Vec3_Scale( dB, ( capsule->radius - ldB ) );
+            outInfo.intersects = true;
+            outInfo.normal = dB;
+        }
+    }     
+    return outInfo;
+}
+
+void Dynamics_CapsulePolygonCollision( TBody * capsuleBody, TBody * polygon ) {
+    // create fake sphere, that can fully contain our capsule
+    float fakeSphereRadius = capsuleBody->shape->capsule->radius + Vec3_Distance( capsuleBody->shape->capsule->a, capsuleBody->shape->capsule->b ) / 2;
+    TSphereShape sph = SphereShape_Set( capsuleBody->position, fakeSphereRadius );
+    // acquire for list of triangle indices in the polygon, that are close enough to our capsule
+    Octree_GetContainIndex( &polygon->shape->octree, &sph );
+    
+    TCapsuleShape * capsuleShape = capsuleBody->shape->capsule;
+    
+    for( int i = 0; i < polygon->shape->octree.containIndexCount; i++ ) {
+        TTriangle * triangle = polygon->shape->triangles + polygon->shape->octree.containIndices[i];
+
+        // create copy of actual capsule shape and add body's offset to it
+        TCapsuleShape shape = *capsuleShape;
+        shape.a = Vec3_Add( shape.a, capsuleBody->position );
+        shape.b = Vec3_Add( shape.b, capsuleBody->position );
+
+        TCapsuleTriangleIntersectionInfo intInfo = Intersection_CapsuleTriangle( &shape, triangle ) ;
+        
+        if( intInfo.intersects ) {     
+            capsuleBody->position = Vec3_Add( capsuleBody->position, intInfo.applicableOffset );
+
+            capsuleBody->linearVelocity = Plane_ProjectVector( capsuleBody->linearVelocity, triangle->normal );
+ 
+            if( capsuleBody->contactCount < MAX_CONTACTS ) {
+                capsuleBody->contacts[ capsuleBody->contactCount ].normal = intInfo.normal;
+                capsuleBody->contacts[ capsuleBody->contactCount ].triangle = triangle;
+                capsuleBody->contacts[ capsuleBody->contactCount ].body = polygon;
+                capsuleBody->contacts[ capsuleBody->contactCount ].position = intInfo.intersectionPoint;
+                capsuleBody->contactCount++;
+            }
+
+            if( polygon->contactCount < MAX_CONTACTS ) {
+                polygon->contactCount++;
+            }
+        }
+    }
+}
+
+//====================================
+// TRIANGLE ROUTINE FUNCTIONS
+//====================================
 void Triangle_Set( TTriangle * triangle, const TVec3 * a, const TVec3 * b, const TVec3 * c ) {
     triangle->a = *a;
     triangle->b = *b;
@@ -78,50 +215,11 @@ void Dynamics_AddConstraint( TConstraint * constraint ) {
     List_Add( &g_dynamicsWorld.constraints, constraint );
 }
 
-bool Intersection_RayPlane( const TRay * ray, const TPlane * plane, TVec3 * outIntersectPoint, ERayType rayType ) {
-    // solve plane equation 
-    float u = -( Vec3_Dot( ray->begin, plane->normal ) + plane->dist );
-    float v = Vec3_Dot( ray->dir, plane->normal );
-    float t = u / v;
-
-    // ray miss 
-    if (t < 0.0f) {
-        return false;
-    }
-
-    // find intersection point 
-    *outIntersectPoint = Vec3_Add( ray->begin, Vec3_Scale( ray->dir, t ));
-
-    if( rayType == RAY_INFINITE ) {
-        return true;
-    }
-
-    if( rayType == RAY_LINE_SEGMENT ) {
-        return ((t >= 0.0f) && (t <= 1.0f));
-    }
-
-    // bad ray type 
-    return false;
-}
 
 
-bool Intersection_RayTriangle( const TRay * ray, const TTriangle * triangle, TVec3 * outIntersectPoint, ERayType rayType ) {
-    // build plane 
-    TPlane plane;
-    Plane_SetTriangle( &plane, triangle );
 
-    if( !Intersection_RayPlane( ray, &plane, outIntersectPoint, rayType )) {
-        return false;
-    }
 
-    return Triangle_CheckPoint( outIntersectPoint, triangle );
-}
-
-float Plane_Distance( const TPlane * plane, const TVec3 * point ) {
-    return fabs( Vec3_Dot( plane->normal, *point ) + plane->dist );
-}
-
-char Geometry_PointOnLineSegment( TVec3 * point, const TVec3 * a, const TVec3 * b ) {
+bool Geometry_PointOnLineSegment( TVec3 * point, const TVec3 * a, const TVec3 * b ) {
     // simply check, if point lies in bounding box (a,b), means that point is on line 
     TVec3 min = *a;
     TVec3 max = *b;
@@ -145,15 +243,18 @@ char Geometry_PointOnLineSegment( TVec3 * point, const TVec3 * a, const TVec3 * 
     }
 
     if( (point->x > max.x) || (point->y > max.y) || (point->z > max.z) ) {
-        return 0;
+        return false;
     }
     if( (point->x < min.x) || (point->y < min.y) || (point->z < min.z) ) {
-        return 0;
+        return false;
     }
-    return 1;
+    return true;
 }
 
-char Intersection_RaySphere( const TRay * ray, const TSphereShape * sphere, TVec3 * intPoint1, TVec3 * intPoint2, ERayType rayType ) {
+//====================================
+// SPHERE INTERSECTION AND DYNAMICS 
+//====================================
+bool Intersection_RaySphere( const TRay * ray, const TSphereShape * sphere, TVec3 * intPoint1, TVec3 * intPoint2, ERayType rayType ) {
     TVec3 d = Vec3_Sub( ray->begin, sphere->position );
 
     float a = Vec3_Dot( ray->dir, ray->dir );
@@ -163,7 +264,7 @@ char Intersection_RaySphere( const TRay * ray, const TSphereShape * sphere, TVec
     float discriminant = b * b - 4 * a * c;
 
     if( discriminant < 0.0f ) {
-        return 0;
+        return false;
     }
 
     float discrRoot = sqrt( discriminant );
@@ -181,7 +282,7 @@ char Intersection_RaySphere( const TRay * ray, const TSphereShape * sphere, TVec
     }
 
     if( rayType == RAY_INFINITE ) {
-        return 1;
+        return true;
     }
 
     if( rayType == RAY_LINE_SEGMENT ) {
@@ -189,7 +290,7 @@ char Intersection_RaySphere( const TRay * ray, const TSphereShape * sphere, TVec
     }
 
     // bad ray type 
-    return 0;
+    return false;
 }
 
 char Intersection_SphereSphere( const TSphereShape * sphere1, const TSphereShape * sphere2, float * penetrationDepth ) {
@@ -217,18 +318,19 @@ char Intersection_SpherePoint( const TSphereShape * sphere, const TVec3 * point 
 }
 
 TVec3 Geometry_ProjectPointOnLine( TVec3 point, TVec3 a, TVec3 b ) {
-    // A + dot(AP,AB) / dot(AB,AB) * AB	 
-    TVec3 ap = Vec3_Sub( point, a );
     TVec3 ab = Vec3_Sub( b, a );    
     float div = Vec3_Dot( ab, ab );
     // degenerated vector can produce NAN result, prevent it 
     if( div < 0.000001f ) {
         return Vec3_Set( 0.0f, 0.0f, 0.0f );
     }
-    return Vec3_Add( a, Vec3_Scale( ab, Vec3_Dot( ap, ab ) / div ) );
+    return Vec3_Add( a, Vec3_Scale( ab, Vec3_Dot( Vec3_Sub( point, a ), ab ) / div ) );
 }
 
-void Ray_TraceWorld( TRay * ray, TRayTraceResult * out ) {
+//====================================
+// RAY-TRACING ROUTINE FUNCTIONS
+//====================================
+void Ray_TraceWorldStatic( TRay * ray, TRayTraceResult * out ) {
     TTriangle * nearestTriangle = 0;
     TVec3 nearestPosition;
     TVec3 nearestNormal;
@@ -260,18 +362,6 @@ void Ray_TraceWorld( TRay * ray, TRayTraceResult * out ) {
                 }                
             }
         }
-        // trace ray through spheres 
-        if( body->shape->type == SHAPE_SPHERE ) {
-            TSphereShape sph = SphereShape_Set( body->position, body->shape->sphereRadius );
-            TVec3 ip1, ip2;
-            if( Intersection_RaySphere( ray, &sph, &ip1, &ip2, RAY_INFINITE )) {
-                out->position = Vec3_Max( ip1, ip2 );
-                out->triangle = NULL;
-                out->normal = ray->dir;
-                out->body = body;
-                return;
-            }
-        }
     }
 
     out->body = nearestBody;
@@ -280,28 +370,7 @@ void Ray_TraceWorld( TRay * ray, TRayTraceResult * out ) {
     out->normal = nearestNormal;
 }
 
-void Ray_TraceWorldDynamic( TRay * ray, TRayTraceResult * out ) {
-    for_each( TBody, body, g_dynamicsWorld.bodies ) {
-        // trace ray through spheres 
-        if( body->shape->type == SHAPE_SPHERE ) {
-            TSphereShape sph = SphereShape_Set( body->position, body->shape->sphereRadius );
-            TVec3 ip1, ip2;
-            if( Intersection_RaySphere( ray, &sph, &ip1, &ip2, RAY_INFINITE )) {
-                out->position = Vec3_Max( ip1, ip2 );
-                out->triangle = NULL;
-                out->normal = ray->dir;
-                out->body = body;
-                return;
-            }
-        }
-    }
-    out->position = Vec3_Zero();
-    out->body = NULL;
-    out->normal = Vec3_Zero();
-    out->triangle = NULL;
-}
-
-void Ray_TraceWorldMultithreaded( TRay * ray, TRayTraceResult * out, int threadNum ) {
+void Ray_TraceWorldStaticMultithreaded( TRay * ray, TRayTraceResult * out, int threadNum ) {
     TTriangle * nearestTriangle = 0;
     TVec3 nearestPosition;
     TVec3 nearestNormal;
@@ -342,6 +411,27 @@ void Ray_TraceWorldMultithreaded( TRay * ray, TRayTraceResult * out, int threadN
     out->normal = nearestNormal;
 }
 
+void Ray_TraceWorldDynamic( TRay * ray, TRayTraceResult * out ) {
+    for_each( TBody, body, g_dynamicsWorld.bodies ) {
+        // trace ray through spheres 
+        if( body->shape->type == SHAPE_SPHERE ) {
+            TSphereShape sph = SphereShape_Set( body->position, body->shape->sphereRadius );
+            TVec3 ip1, ip2;
+            if( Intersection_RaySphere( ray, &sph, &ip1, &ip2, RAY_INFINITE )) {
+                out->position = Vec3_Max( ip1, ip2 );
+                out->triangle = NULL;
+                out->normal = ray->dir;
+                out->body = body;
+                return;
+            }
+        }
+    }
+    out->position = Vec3_Zero();
+    out->body = NULL;
+    out->normal = Vec3_Zero();
+    out->triangle = NULL;
+}
+
 bool EdgeSphereIntersection( const TRay * edgeRay, const TSphereShape * sphere, TVec3 * intersectionPoint ) {
     if( Intersection_RaySphere( edgeRay, sphere, 0, 0, RAY_INFINITE ) ) {
         *intersectionPoint = Geometry_ProjectPointOnLine( sphere->position, edgeRay->begin, edgeRay->end );
@@ -354,8 +444,7 @@ bool EdgeSphereIntersection( const TRay * edgeRay, const TSphereShape * sphere, 
 
 bool Intersection_SphereTriangle( const TSphereShape * sphere, const TTriangle * triangle, TVec3 * intersectionPoint ) {
     // build plane from triangle 
-    TPlane plane;
-    Plane_SetTriangle( &plane, triangle );
+    TPlane plane = Plane_SetTriangle( triangle );
 
     // find distance from center of the sphere to the plane 
     float distance = Plane_Distance( &plane, &sphere->position );
@@ -385,6 +474,7 @@ bool Intersection_SphereTriangle( const TSphereShape * sphere, const TTriangle *
     // no intersection 
     return false;
 }
+
 // build plane for specified box face, box is axis-aligned 
 void Plane_SetBoxFace( TPlane * plane, const TVec3 * min, const TVec3 * max, int faceNum ) {
     switch( faceNum ) {
@@ -496,7 +586,6 @@ void Shape_BoxFromSurfaces( TCollisionShape * shape, const TList * surfaces ) {
 
 void Shape_SphereFromSurfaces( TCollisionShape * shape, const TList * surfaces ) {
     Shape_GetSurfacesExtents( surfaces, &shape->min, &shape->max );
-
     shape->type = SHAPE_SPHERE;
     shape->triangleCount = 0;
     shape->triangles = 0;
@@ -533,19 +622,16 @@ void Shape_PolygonFromSurfaces( TCollisionShape * shape, const TList * surfaces 
 void Dynamics_SphereSphereCollision( TBody * sphere1, TBody * sphere2 ) {
     TSphereShape sph1 = SphereShape_Set( sphere1->position, sphere1->shape->sphereRadius );
     TSphereShape sph2 = SphereShape_Set( sphere2->position, sphere2->shape->sphereRadius );
-
     float penetrationDepth;
-    char intersection = Intersection_SphereSphere( &sph1, &sph2, &penetrationDepth );
-
-    if( intersection ) {
+    if( Intersection_SphereSphere( &sph1, &sph2, &penetrationDepth )) {
         TVec3 middle = Vec3_Sub( sphere1->position, sphere2->position );
         TVec3 direction = Vec3_Normalize( middle );
         TVec3 offset = Vec3_Scale( direction, penetrationDepth / 2.0f );
         sphere1->position = Vec3_Add( sphere1->position, offset );
         sphere2->position = Vec3_Sub( sphere2->position, offset );
         // project linear velocities on a fake plane 
-        Plane_ProjectVector( &sphere1->linearVelocity, &sphere1->linearVelocity, &direction );
-        Plane_ProjectVector( &sphere2->linearVelocity, &sphere2->linearVelocity, &direction );
+        sphere1->linearVelocity = Plane_ProjectVector( sphere1->linearVelocity, direction );
+        sphere2->linearVelocity = Plane_ProjectVector( sphere2->linearVelocity, direction );
         // fill contact information 
         sphere1->contacts[ sphere1->contactCount ].body = sphere2;
         sphere1->contacts[ sphere1->contactCount ].normal = direction;
@@ -568,16 +654,14 @@ void Dynamics_SphereSphereCollision( TBody * sphere1, TBody * sphere2 ) {
 }
 
 // project vector onto plane
-void Plane_ProjectVector( TVec3 * out, const TVec3 * a, const TVec3 * planeNormal ) {
-    // proj-plane(a) = a - planeNormal * ((a * planeNormal) / |planeNormal|^2) 
-    float nlen = Vec3_SqrLength( *planeNormal );
+TVec3 Plane_ProjectVector( TVec3 a, TVec3 planeNormal ) {
+    float nlen = Vec3_SqrLength( planeNormal );
     // normal vector is degenerated 
     if( nlen < C_EPSILON ) {
-        *out = Vec3_Zero();
-        return;
+        return Vec3_Zero();
     }
-    float t = Vec3_Dot( *a, *planeNormal ) / nlen;   
-    *out = Vec3_Sub( *a, Vec3_Scale( *planeNormal, t ));
+    float t = Vec3_Dot( a, planeNormal ) / nlen;   
+    return Vec3_Sub( a, Vec3_Scale( planeNormal, t ));
 }
 
 void Dynamics_SpherePolygonCollision( TBody * sphere, TBody * polygon ) {
@@ -599,9 +683,9 @@ void Dynamics_SpherePolygonCollision( TBody * sphere, TBody * polygon ) {
                 float penetrationDepth = sphere->shape->sphereRadius - length;
                 // degenerated case, ignore 
                 if( penetrationDepth < 0 ) continue;                
-                sphere->position = Vec3_Add( sphere->position, Vec3_Scale( direction, penetrationDepth * 1.01f ));
+                sphere->position = Vec3_Add( sphere->position, Vec3_Scale( direction, penetrationDepth ));
                 // perform sliding by projecting velocity vector on triangle plane 
-                Plane_ProjectVector( &sphere->linearVelocity, &sphere->linearVelocity, &triangle->normal );
+                sphere->linearVelocity = Plane_ProjectVector( sphere->linearVelocity, triangle->normal );
                 // write contact info 
                 if( sphere->contactCount < MAX_CONTACTS ) {
                     sphere->contacts[ sphere->contactCount ].normal = direction;
@@ -741,6 +825,11 @@ void Dynamics_StepSimulation() {
                 if( body->shape->type == SHAPE_AABB ) {
                     if( otherBody->shape->type == SHAPE_POLYGON ) {
                         Dynamics_BoxPolygonCollision( body, otherBody );
+                    }
+                }
+                if( body->shape->capsule ) {
+                    if( otherBody->shape->type == SHAPE_POLYGON ) {
+                        Dynamics_CapsulePolygonCollision( body, otherBody );                        
                     }
                 }
             }

@@ -9,7 +9,7 @@ typedef struct TMonster {
     float life;
     TAnimation * runAnim;
     TAnimation * attackAnim;
-    TCollisionShape shape;
+    //TCollisionShape shape;
     TBody body;
 } TMonster;
 
